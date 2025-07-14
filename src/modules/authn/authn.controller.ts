@@ -1,7 +1,7 @@
-import { Body, Controller, Get, HttpStatus, Post, Put, Req, Res, UseGuards } from "@nestjs/common"
-import { Request, Response } from "express"
+import { Body, Controller, Headers, Post, UnauthorizedException, UseGuards } from "@nestjs/common"
 import { AuthnService } from "./authn.service"
-import { LoginPayload as LoginPayloadDto, LoginResult as LoginResultDto } from "./dto/login.dto"
+import { LoginPayload as LoginPayload, LoginResult as LoginResult } from "./dto/login"
+import { AuthGuard } from 'src/modules/authz/auth.guard';
 
 @Controller("authn")
 export class AuthnController {
@@ -10,36 +10,25 @@ export class AuthnController {
     ) { }
 
     @Post("login")
-    async login(@Body() loginDto: LoginPayloadDto): Promise<LoginResultDto> {
-        const result = await this.authnService.login(loginDto)
-
-        return new LoginResultDto("", "", "")
+    async login(@Body() loginPayload: LoginPayload): Promise<LoginResult> {
+        const result = await this.authnService.login(loginPayload)
+        return {
+            userId: result.userId,
+            username: result.username,
+            email: result.email,
+            name: result.name,
+            authToken: result.authToken,
+        }
     }
 
     @Post("logout")
-    async logout() {
-        
+    @UseGuards(AuthGuard)
+    async logout(@Headers('authorization') authToken: string) {
+        if (!authToken) {
+            throw new UnauthorizedException("Invalid authorization")
+        }
+
+        this.authnService.logout(authToken)
+        return { result: true }
     }
-
-    // @Get("get-identity")
-    // @UseGuards(AuthGuard)
-    // async getIdentity(@Req() req: Request, @Res() res: Response) {
-    //     const result = await this.authService.getIdentity(req["headers"]["authorization"])
-    //     if (result instanceof EndpointErrorResult) {
-    //         return res.status(result.error.code).json(result)
-    //     }
-
-    //     return res.status(HttpStatus.OK).json(new EndpointSuccessResult(result))
-    // }
-
-    // @Put("change-password")
-    // @UseGuards(AuthGuard)
-    // async addUser(@Req() req: Request, @Body() changePasswordSpec: ChangePasswordSpec, @Res() res: Response): Promise<object> {
-    //     const result = await this.authService.changePassword(req["userIdentity"], changePasswordSpec)
-    //     if (result instanceof EndpointErrorResult) {
-    //         return res.status(result.error.code).json(result)
-    //     }
-
-    //     return res.status(HttpStatus.OK).json(new EndpointSuccessResult(result))
-    // }
 }

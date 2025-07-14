@@ -10,13 +10,9 @@ export class LoginPayload {
 }
 
 export class LoginResult {
+    userId: number
     username: string
+    email: string
     name: string
-    token: string
-
-    constructor(token: string, username: string, name: string) {
-        this.username = username
-        this.name = name
-        this.token = token
-    }
+    authToken: string
 }

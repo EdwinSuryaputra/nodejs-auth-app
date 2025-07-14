@@ -1,184 +1,67 @@
-import { HttpStatus, Inject, Injectable, forwardRef } from "@nestjs/common"
+import { Injectable, UnauthorizedException } from "@nestjs/common"
 import { JwtService } from "@nestjs/jwt"
-import { InjectRepository } from "@nestjs/typeorm"
-import { IsNull, Repository } from "typeorm"
-import { AuthService } from "../interfaces/AuthService"
-import { UserServiceImpl } from "./UserServiceImpl"
-import { Roles } from "src/entities/Roles"
-import { LoginDto, LoginResult } from "src/data/auth/AuthDtos"
-import { conf } from "conf/Conf"
-import { EndpointErrorResult } from "src/helper/EndpointErrorResult"
-import { UserIdentityPayload } from "src/data/auth/GetIdentityPayload"
-import { UserRoleEnum } from "src/data/auth/UserRoleEnum"
-import { ProfileCmsServiceImpl } from "src/modules/cms/services/ProfileCmsServiceImpl"
-import { PublicFacingId } from "src/helper/PublicFacingId"
-import { Users } from "src/entities/Users"
-import { ChangePasswordSpec } from "src/data/auth/ChangePasswordDto"
-import { GetUserDetailSpec, UpdateUserSpec } from "src/data/auth/UserDtos"
-import { PasswordHashing } from "src/helper/PasswordFacing"
+import { plainToInstance } from 'class-transformer';
+import { UserIdentity } from "src/common/dto/user.identity"
+import { GenerateAuthTokenPayload, GenerateAuthTokenResult } from "./dto/generate.auth.token"
+import { RedisService } from "src/adapters/redis/redis.service"
+import { JwtPayload } from "../../common/dto/jwt.payload";
+import { conf } from "conf/conf";
 
 @Injectable()
-export class AuthnService {
+export class AuthzService {
     constructor(
-        @InjectRepository(Roles)
-        private readonly roleRepository: Repository<Roles>,
         private readonly jwtService: JwtService,
-
-        @Inject(forwardRef(() => UserServiceImpl))
-        private readonly userService: UserServiceImpl,
-
-        @Inject(forwardRef(() => ProfileCmsServiceImpl))
-        private readonly profileCmsService: ProfileCmsServiceImpl,
+        private readonly redisService: RedisService,
     ) { }
 
-    async login(loginDto: LoginDto): Promise<LoginResult | EndpointErrorResult> {
-        const [user, roles] = await Promise.all([
-            this.userService.findUserByEmailAndPassword(loginDto.email, loginDto.password),
-            this.roleRepository.find(),
-        ])
+    generateAuthToken(payload: GenerateAuthTokenPayload): GenerateAuthTokenResult {
+        const jwtPayload: JwtPayload = { sub: payload.user.username, iat: Date.now() }
+        const authToken = `Bearer ${this.jwtService.sign(jwtPayload, {
+            "secret": conf.JWT_SECRET,
+        })}`
 
-        if (user instanceof EndpointErrorResult) {
-            return user
+        const redisKeyName = this.getRedisKeyName(payload.user.username)
+        const redisValue: UserIdentity = {
+            userId: payload.user.id,
+            username: payload.user.username,
+            email: payload.user.email,
+            name: payload.user.name,
+            authToken: authToken,
+        }
+        const redisExpiresIn = conf.JWT_EXPIRES_IN_SECONDS
+
+        this.redisService.set(redisKeyName, JSON.stringify(redisValue), redisExpiresIn)
+
+        return { authToken: authToken }
+    }
+
+    async verifyAuthToken(authToken: string): Promise<UserIdentity> {
+        if (!authToken.startsWith('Bearer ')) {
+            throw new UnauthorizedException('Missing or invalid token');
         }
 
-        if (roles.length < 1) {
-            return new EndpointErrorResult(HttpStatus.UNPROCESSABLE_ENTITY, "Peran pengguna tidak ditemukan")
+        const splittedToken = authToken.split(' ')[1];
+        const jwtPayload: JwtPayload = this.jwtService.verify(splittedToken)
+
+        const redisValue = await this.redisService.get(this.getRedisKeyName(jwtPayload.sub))
+        if (!redisValue) {
+            throw new UnauthorizedException("Unauthorized")
         }
 
-        const role = UserRoleEnum[roles.find((role) => role.id === user.role_id).name]
+        const userIdentity = plainToInstance(UserIdentity, JSON.parse(redisValue))
 
-        let payload: UserIdentityPayload
-
-        if (role === UserRoleEnum["PROFILE_OWNER"]) {
-            const result = await this.loginForProfileOwner(user, role)
-
-            if (result instanceof EndpointErrorResult) {
-                return result
-            }
-
-            payload = result
-        } else if (role === UserRoleEnum["ADMIN"]) {
-            payload = this.loginForAdmin(user, role)
-        } else {
-            return new EndpointErrorResult(HttpStatus.UNPROCESSABLE_ENTITY, "Akun pengguna dengan peran tersebut tidak ditemukan")
-        }
-
-        const token = await this.jwtService.signAsync({ ...payload }, {
-            "secret": conf.JWT_SECRET_KEY,
-            "expiresIn": conf.JWT_EXPIRES_IN,
-        })
-
-        /* await this.redisClientService.getRedisClient().setex(`${payload["email"]}`, token, conf.JWT_EXPIRES_IN) */
-
-        return new LoginResult(token)
+        return userIdentity
     }
 
-    private loginForAdmin(user: Users, role: UserRoleEnum): UserIdentityPayload | null {
-        const payload = new UserIdentityPayload()
-        payload.userId = PublicFacingId.toHash(user.id)
-        payload.email = user.email
-        payload.name = user.name
-        payload.role = role
-        payload.isActive = user.is_active
-
-        return payload
-    }
-
-    private async loginForProfileOwner(user: Users, role: UserRoleEnum): Promise<UserIdentityPayload | EndpointErrorResult> {
-        const profile = await this.profileCmsService.getProfileDetailByUserId(user.id)
-
-        if (profile instanceof EndpointErrorResult) {
-            return new EndpointErrorResult(HttpStatus.UNPROCESSABLE_ENTITY, "Profil tidak ditemukan")
-        }
-
-        const payload = new UserIdentityPayload()
-        payload.userId = PublicFacingId.toHash(user.id)
-        payload.email = user.email
-        payload.name = user.name
-        payload.role = role
-        payload.profileId = profile.id
-        payload.isActive = user.is_active
-
-        return payload
-    }
-
-    async getRoles(): Promise<Roles[]> {
-        return await this.roleRepository.find({
-            "where": {
-                "deleted_at": IsNull(),
-                "deleted_by": IsNull(),
-            }
-        })
-    }
-
-    async getRoleById(roleId: number): Promise<Roles | null> {
-        return await this.roleRepository.findOne({
-            "where": {
-                "id": roleId,
-                "deleted_at": IsNull(),
-                "deleted_by": IsNull(),
-            },
-        })
-    }
-
-    async getRoleByName(roleName: string): Promise<Roles | null> {
-        return await this.roleRepository.findOne({
-            "where": {
-                "name": roleName,
-                "deleted_at": IsNull(),
-                "deleted_by": IsNull(),
-            }
-        })
-    }
-
-    async getIdentity(token: string): Promise<UserIdentityPayload | EndpointErrorResult> {
-        try {
-            return await this.jwtService.verifyAsync(
-                token,
-                {
-                    secret: conf.JWT_SECRET_KEY,
-                }
-            )
-        } catch (error) {
-            return new EndpointErrorResult(HttpStatus.UNPROCESSABLE_ENTITY, error.message ? error.message : error, error.stack)
+    async revokeAuthToken(authToken: string) {
+        const jwtPayload = await this.verifyAuthToken(authToken)
+        if (jwtPayload != null) {
+            this.redisService.del(this.getRedisKeyName(jwtPayload.username))
         }
     }
 
-    async changePassword(userIdentity: UserIdentityPayload, spec: ChangePasswordSpec): Promise<Boolean | EndpointErrorResult> {
-        try {
-            if (spec.newPassword != spec.newPasswordConfirmation) {
-                throw `Confirmation password is not match`
-            }
-
-            const user = await this.userService.getUserDetail(new GetUserDetailSpec(userIdentity.userId))
-            if (user instanceof EndpointErrorResult) {
-                return user
-            }
-
-            if (!await PasswordHashing.compareHash(spec.currentPassword, user.password)) {
-                throw `Current password is not match`
-            }
-
-            if (await PasswordHashing.compareHash(spec.newPassword, user.password)) {
-                throw `New password must not equal with the current password`
-            }
-
-            const updateSpec = new UpdateUserSpec()
-            updateSpec.id = userIdentity.userId
-            updateSpec.name = user.name
-            updateSpec.email = user.email
-            updateSpec.isActive = Boolean(user.isActive)
-            updateSpec.role = user.role
-            updateSpec.password = spec.newPassword
-
-            const updateUser = await this.userService.updateUser(userIdentity, updateSpec)
-            if (updateUser instanceof EndpointErrorResult) {
-                return updateUser
-            }
-
-            return true
-        } catch (error) {
-            return new EndpointErrorResult(HttpStatus.UNPROCESSABLE_ENTITY, error.message ? error.message : error, error.stack)
-        }
+    getRedisKeyName(username: string): string {
+        return `bearer-token-${username}`
     }
+
 }

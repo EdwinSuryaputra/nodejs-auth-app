@@ -1,8 +1,15 @@
+.PHONY: generate-model
+generate-model:
+	npx prisma generate
+
+.PHONY: generate-migration
+generate-migration:
+	npx prisma migrate dev --create-only --name $(name)
+
+.PHONY: migrate
 migrate:
-npx prisma migrate dev --name $(name)
+	npx prisma migrate deploy
 
-generate-prisma:
-npx prisma generate
-
+.PHONY: run
 run:
-npx run dev
+	pnpm start:dev

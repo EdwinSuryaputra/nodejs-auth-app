@@ -6,7 +6,7 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/prisma"
+  output = "../node_modules/.prisma/client"
 }
 
 datasource db {
@@ -14,15 +14,16 @@ datasource db {
   url      = env("POSTGRES_URL")
 }
 
-model Users {
+model users {
   id       Int      @id @default(autoincrement())
   username String   @unique
   email    String   @unique
   password String   
-  createdAt DateTime @default(now())
-  createdBy String 
-  updatedAt DateTime 
-  updatedBy String
-  deletedAt DateTime?
-  deletedBy String?
+  name     String 
+  created_at DateTime @default(now())
+  created_by String 
+  updated_at DateTime 
+  updated_by String
+  deleted_at DateTime?
+  deleted_by String?
 }
