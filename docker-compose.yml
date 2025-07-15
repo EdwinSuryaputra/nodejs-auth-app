@@ -1,8 +1,6 @@
-version: '3.9'
-
 services:
   app:
-    container_name: nodejs-auth-service-sample-api
+    container_name: nodejs-auth-app
     build:
       context: .
       dockerfile: Dockerfile
@@ -21,7 +19,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: localdb
+      POSTGRES_DB: postgres
     ports:
       - '5432:5432'
     volumes:
