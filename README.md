@@ -9,15 +9,18 @@ This project uses [Prisma](https://www.prisma.io/) for database schema managemen
 - [Prisma CLI](https://www.prisma.io/docs/reference/api-reference/command-reference) (used via `npx`)
 - GNU Make (or compatible)
 
-## Deployment
-### ⚓ Docker
+## Documentation
+### 📃 Swagger
 ```
-docker compose up -d
-or 
-docker compose up --build -d
+http://localhost:3000/api-docs
 ```
 
 ## Makefile Commands
+
+### ⚓ Docker Deployment 
+```
+make deploy-docker
+```
 
 ### 🔧 Generate Prisma Client
 Generate or update the Prisma client:

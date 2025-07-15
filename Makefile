@@ -1,3 +1,7 @@
+.PHONY: deploy-docker
+deploy-docker:
+	docker compose up --build -d
+
 .PHONY: generate-model
 generate-model:
 	npx prisma generate
